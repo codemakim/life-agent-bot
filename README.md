@@ -1,0 +1,246 @@
+# Life Agent Bot
+
+Telegram에서 쓰는 개인용 로컬 AI 봇입니다. Telegram Bot polling으로 메시지를 받고,
+로컬 Ollama의 Gemma 계열 모델에 질문을 전달합니다.
+
+## 현재 기능
+
+- Telegram Bot polling
+- `/ask`: 빠른 모델로 질문
+- `/deep`: 큰 모델로 깊은 질문
+- `/code`: 코딩용 시스템 프롬프트로 질문
+- `/status`: Ollama 상태, 모델 목록, git 브랜치/커밋 확인
+- `/update`: 현재 브랜치 업데이트 후 빌드하고 프로세스 재시작
+- `/help`: 사용법 출력
+- 이미지 메시지 분석
+- Telegram slash command 등록
+- typing 표시 유지
+- 긴 메시지 분할 전송
+- 답변 Markdown 일부를 Telegram 서식으로 표시
+- 허용된 Telegram user id만 사용 가능
+- 여러 Telegram user id 허용
+- 사진 caption에서 `/deep`, `/code` 모델 선택
+
+## 준비물
+
+- Node.js
+- npm
+- Ollama
+- Telegram BotFather에서 발급한 봇 토큰
+- 사용할 Ollama 모델
+
+모델 이름은 로컬에 설치된 이름과 정확히 맞아야 합니다.
+
+```bash
+ollama list
+```
+
+## 설치
+
+```bash
+cd ~/code/life-agent-bot
+npm install
+```
+
+## 환경변수
+
+실제 비밀값은 `.env`에만 넣습니다. `.env.example`은 예시 파일이라 커밋해도 되지만,
+`.env`는 `.gitignore`에 들어 있어서 커밋하지 않습니다.
+
+`.env` 예시:
+
+```bash
+TELEGRAM_BOT_TOKEN=BotFather에서_새로_발급받은_봇_토큰
+ALLOWED_TELEGRAM_USER_ID=내_Telegram_user_id,여자친구_Telegram_user_id
+ALLOW_ALL_USERS_DURING_SETUP=false
+
+OLLAMA_BASE_URL=http://localhost:11434
+
+FAST_MODEL=gemma4:e4b
+DEEP_MODEL=gemma4:26b
+CODE_MODEL=gemma4:26b
+VISION_MODEL=gemma4:e4b
+```
+
+값 설명:
+
+- `TELEGRAM_BOT_TOKEN`: BotFather에서 받은 봇 토큰입니다. 이전에 노출된 토큰이면 BotFather에서 revoke/regenerate 후 새 토큰을 넣습니다.
+- `ALLOWED_TELEGRAM_USER_ID`: 봇을 쓸 수 있는 Telegram user id 목록입니다. 한 명이면 숫자 하나, 여러 명이면 쉼표로 구분합니다.
+- `ALLOW_ALL_USERS_DURING_SETUP`: 처음 user id를 확인할 때만 `true`로 둡니다. 확인 후에는 반드시 `false`로 바꿉니다.
+- `OLLAMA_BASE_URL`: Ollama 서버 주소입니다. 같은 PC/WSL에서 Ollama가 돌면 보통 `http://localhost:11434`입니다.
+- `FAST_MODEL`: `/ask`와 일반 메시지에 쓸 빠른 모델입니다.
+- `DEEP_MODEL`: `/deep`에 쓸 큰 모델입니다.
+- `CODE_MODEL`: `/code`에 쓸 코딩용 모델입니다.
+- `VISION_MODEL`: 이미지 메시지를 분석할 모델입니다. 값을 비우면 코드 기본값은 `FAST_MODEL`과 같은 모델입니다.
+
+여러 명이 쓰려면 이렇게 넣습니다.
+
+```bash
+ALLOWED_TELEGRAM_USER_ID=123456789,987654321
+```
+
+공백이 있어도 됩니다.
+
+```bash
+ALLOWED_TELEGRAM_USER_ID=123456789, 987654321
+```
+
+## 최초 실행
+
+Telegram user id를 모르면 처음에는 setup mode로 실행합니다.
+
+1. `.env`에서 `TELEGRAM_BOT_TOKEN`만 먼저 채웁니다.
+2. `ALLOWED_TELEGRAM_USER_ID`는 비워둡니다.
+3. `ALLOW_ALL_USERS_DURING_SETUP=true`로 둡니다.
+4. 개발 모드로 봇을 실행합니다.
+
+```bash
+npm run dev
+```
+
+5. Telegram에서 봇에게 `/start`를 보냅니다.
+6. 응답에 표시되는 `your telegram user id` 숫자를 `.env`의 `ALLOWED_TELEGRAM_USER_ID`에 넣습니다.
+7. `ALLOW_ALL_USERS_DURING_SETUP=false`로 바꿉니다.
+8. 실행 중인 터미널에서 `Ctrl+C`로 종료하고 다시 실행합니다.
+
+```bash
+npm run dev
+```
+
+## 실행
+
+개발 모드:
+
+```bash
+npm run dev
+```
+
+빌드 후 실행:
+
+```bash
+npm run build
+npm start
+```
+
+## 명령어
+
+- `/ask 질문`: `FAST_MODEL`로 빠르게 답합니다.
+- `/deep 질문`: `DEEP_MODEL`로 더 깊게 답합니다.
+- `/code 질문`: `CODE_MODEL`과 코딩용 시스템 프롬프트로 답합니다.
+- `/status`: Ollama 상태, 모델 목록, git 브랜치, git 커밋을 보여줍니다.
+- `/update`: 현재 체크아웃된 브랜치를 `git pull --ff-only`로 업데이트하고, `npm install`, `npm run build` 후 재시작합니다.
+- `/help`: 사용법을 보여줍니다.
+
+일반 텍스트 메시지는 `/ask`처럼 처리됩니다.
+
+답변에 포함된 Markdown은 Telegram에서 보이는 서식으로 일부 변환됩니다.
+
+지원하는 대표 서식:
+
+- `**굵게**`
+- `_기울임_`
+- `` `인라인 코드` ``
+- fenced code block
+- `[링크](https://example.com)`
+
+Telegram이 서식 파싱에 실패하면 원문 텍스트로 다시 보냅니다.
+
+이미지를 보내면 기본적으로 `VISION_MODEL`로 분석합니다. 사진 caption에 질문을 같이 쓰면 그 질문을 사용합니다.
+
+예:
+
+```text
+[음식 사진]
+이거 음식 뭐야?
+```
+
+caption 없이 이미지만 보내면 기본 이미지 설명 프롬프트로 답합니다.
+
+사진 caption을 `/deep`으로 시작하면 `DEEP_MODEL`이 이미지를 봅니다.
+
+```text
+[음식 사진]
+/deep 이 음식이 뭔지 자세히 봐줘
+```
+
+사진 caption을 `/code`로 시작하면 `CODE_MODEL`이 이미지를 봅니다. 에러 화면, 코드 스크린샷 등을 보낼 때 쓸 수 있습니다.
+
+```text
+[에러 화면 사진]
+/code 이 에러 원인 분석해줘
+```
+
+주의할 점:
+
+- 사진을 먼저 보내고 나중에 `/deep ...` 텍스트를 보내면, 현재 구조에서는 앞의 사진을 기억하지 않습니다.
+- 사진 전송 전에 caption 입력칸에 `/deep ...` 또는 `/code ...`를 같이 적어 보내야 합니다.
+
+## `/update` 동작 방식
+
+`/update`는 현재 브랜치가 `main`이든 `master`든 하드코딩하지 않고 현재 체크아웃된 브랜치를 업데이트합니다.
+
+실행 순서:
+
+```bash
+git pull --ff-only
+npm install
+npm run build
+```
+
+성공하면 `.update-ready` 임시 파일을 남기고 프로세스를 종료합니다. systemd가 프로세스를 다시 띄우면,
+봇이 `.update-ready`를 읽고 같은 Telegram 채팅방에 아래 메시지를 보냅니다.
+
+```text
+업데이트 후 재시작 완료.
+사용 준비가 끝났습니다.
+```
+
+이 기능은 systemd 같은 프로세스 매니저가 `Restart=always`로 봇을 다시 실행한다는 전제에서 동작합니다.
+
+## systemd 등록 예시
+
+먼저 실제 npm 경로를 확인합니다.
+
+```bash
+which npm
+```
+
+서비스 파일 예시:
+
+```ini
+[Unit]
+Description=Life Agent Telegram Bot
+After=network.target ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jhkim/code/life-agent-bot
+ExecStart=/home/jhkim/.nvm/versions/node/v24.15.0/bin/npm run start
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+적용:
+
+```bash
+npm run build
+sudo systemctl daemon-reload
+sudo systemctl enable life-agent-bot
+sudo systemctl start life-agent-bot
+sudo systemctl status life-agent-bot
+```
+
+로그 확인:
+
+```bash
+journalctl -u life-agent-bot -f
+```
+
+## 언어별 README에 대해
+
+GitHub의 기본 README는 사용자 언어 설정에 따라 자동으로 바뀌지 않습니다. 나중에 영어 문서도 필요하면
+`README.md`는 한국어로 유지하고, `README.en.md`를 추가해서 서로 링크하는 방식이 가장 단순합니다.
