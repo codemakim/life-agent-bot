@@ -106,14 +106,18 @@ export function getCommandText(ctx: Context): string {
 
 export async function registerCommands(bot: Bot): Promise<void> {
   // Telegram 앱의 slash command 메뉴에 표시될 명령어 목록이다.
-  await bot.api.setMyCommands([
-    { command: 'ask', description: '빠른 질문' },
-    { command: 'deep', description: '26B 모델로 깊은 질문' },
-    { command: 'code', description: '코딩 질문' },
-    { command: 'memory', description: '저장된 대화 맥락 확인' },
-    { command: 'reset', description: '대화 맥락 초기화' },
-    { command: 'status', description: '서버 상태 확인' },
-    { command: 'update', description: '봇 업데이트' },
-    { command: 'help', description: '사용법' }
-  ]);
+  try {
+    await bot.api.setMyCommands([
+      { command: 'ask', description: '빠른 질문' },
+      { command: 'deep', description: '26B 모델로 깊은 질문' },
+      { command: 'code', description: '코딩 질문' },
+      { command: 'memory', description: '저장된 대화 맥락 확인' },
+      { command: 'reset', description: '대화 맥락 초기화' },
+      { command: 'status', description: '서버 상태 확인' },
+      { command: 'update', description: '봇 업데이트' },
+      { command: 'help', description: '사용법' }
+    ]);
+  } catch (error) {
+    console.warn('Failed to register Telegram commands:', error);
+  }
 }

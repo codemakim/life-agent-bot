@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
@@ -15,6 +15,8 @@ import {
 } from '../src/memory.js';
 import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT } from '../src/prompts.js';
 import { markdownToTelegramHtml } from '../src/telegramFormat.js';
+import { registerCommands } from '../src/telegram.js';
+import { sendUpdateReadyNoticeIfNeeded } from '../src/update.js';
 import { buildUpdateReadyNotice, parseUpdateReadyNotice } from '../src/updateNotice.js';
 import { splitTelegramMessage } from '../src/telegramText.js';
 
@@ -313,6 +315,20 @@ describe('markdownToTelegramHtml', () => {
   });
 });
 
+describe('registerCommands', () => {
+  it('does not block startup when Telegram command registration fails', async () => {
+    const bot = {
+      api: {
+        setMyCommands: async () => {
+          throw new Error('telegram timeout');
+        }
+      }
+    };
+
+    await assert.doesNotReject(() => registerCommands(bot as never));
+  });
+});
+
 describe('update ready notice', () => {
   it('round-trips chat id and branch after restart', () => {
     const text = buildUpdateReadyNotice({
@@ -326,5 +342,37 @@ describe('update ready notice', () => {
       branch: 'master',
       commit: 'abc1234'
     });
+  });
+
+  it('does not block startup when the ready notice cannot be sent', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'life-agent-update-test-'));
+    const previousCwd = process.cwd();
+
+    try {
+      process.chdir(tempDir);
+      await writeFile(
+        '.update-ready',
+        buildUpdateReadyNotice({
+          chatId: 123456789,
+          branch: 'master',
+          commit: 'abc1234'
+        }),
+        'utf8'
+      );
+
+      const bot = {
+        api: {
+          sendMessage: async () => {
+            throw new Error('telegram timeout');
+          }
+        }
+      };
+
+      await assert.doesNotReject(() => sendUpdateReadyNoticeIfNeeded(bot as never));
+      assert.match(await readFile('.update-ready', 'utf8'), /LIFE_AGENT_UPDATE_READY/);
+    } finally {
+      process.chdir(previousCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

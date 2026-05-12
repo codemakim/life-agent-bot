@@ -38,12 +38,29 @@ Telegram에서 쓰는 개인용 로컬 AI 봇입니다. Telegram Bot polling으�
 ollama list
 ```
 
-## 설치
+## 빠른 시작
 
 ```bash
 cd ~/code/life-agent-bot
 npm install
+cp .env.example .env
 ```
+
+그 다음 `.env`에 Telegram bot token과 허용할 Telegram user id를 넣고 실행합니다.
+
+```bash
+npm run dev
+```
+
+Telegram에서 봇에게 `/start`를 보내 응답이 오면 기본 설정은 끝입니다.
+
+운영용으로 계속 켜두려면 systemd 서비스를 등록합니다.
+
+```bash
+scripts/install-systemd-service.sh
+```
+
+등록 후에는 Telegram에서 `/status`로 상태를 확인합니다.
 
 ## 환경변수
 
@@ -130,6 +147,34 @@ npm run build
 npm start
 ```
 
+운영 모드:
+
+```bash
+scripts/install-systemd-service.sh
+systemctl --user status life-agent-bot --no-pager
+journalctl --user -u life-agent-bot -f
+```
+
+`scripts/install-systemd-service.sh`는 기본적으로 현재 사용자 systemd 서비스로 설치합니다.
+현재 저장소 경로, 현재 사용자, 실제 `npm` 경로를 감지하므로 clone 위치가 달라도 그대로 쓸 수 있습니다.
+다른 서비스 이름으로 설치하려면 이렇게 실행합니다.
+
+```bash
+SERVICE_NAME=my-life-agent scripts/install-systemd-service.sh
+```
+
+시스템 전체 서비스로 설치해야 하면 `sudo` 권한이 필요합니다.
+
+```bash
+scripts/install-systemd-service.sh --system
+```
+
+사용자 로그인 전에도 자동 시작되어야 하는 서버라면 사용자 서비스 설치 후 아래 설정이 추가로 필요할 수 있습니다.
+
+```bash
+loginctl enable-linger "$USER"
+```
+
 ## 명령어
 
 - `/ask 질문`: `FAST_MODEL`로 빠르게 답합니다.
@@ -199,58 +244,38 @@ npm install
 npm run build
 ```
 
-성공하면 `.update-ready` 임시 파일을 남기고 프로세스를 종료합니다. systemd가 프로세스를 다시 띄우면,
-봇이 `.update-ready`를 읽고 같은 Telegram 채팅방에 아래 메시지를 보냅니다.
+성공하면 `.update-ready` 임시 파일을 남기고 프로세스를 종료합니다. systemd 서비스가 등록되어 있으면
+`Restart=always` 설정으로 봇이 다시 뜨고, 새 프로세스가 `.update-ready`를 읽어 같은 Telegram 채팅방에 아래 메시지를 보냅니다.
 
 ```text
 업데이트 후 재시작 완료.
 사용 준비가 끝났습니다.
 ```
 
-이 기능은 systemd 같은 프로세스 매니저가 `Restart=always`로 봇을 다시 실행한다는 전제에서 동작합니다.
-
-## systemd 등록 예시
-
-먼저 실제 npm 경로를 확인합니다.
+이 기능은 systemd 같은 프로세스 매니저가 봇을 다시 실행한다는 전제에서 동작합니다.
+처음 설치했다면 아래 명령으로 먼저 서비스를 등록하세요.
 
 ```bash
-which npm
+scripts/install-systemd-service.sh
 ```
 
-서비스 파일 예시:
-
-```ini
-[Unit]
-Description=Life Agent Telegram Bot
-After=network.target ollama.service
-
-[Service]
-Type=simple
-WorkingDirectory=/home/jhkim/code/life-agent-bot
-ExecStart=/home/jhkim/.nvm/versions/node/v24.15.0/bin/npm run start
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
-적용:
+서비스 상태와 로그:
 
 ```bash
-npm run build
-sudo systemctl daemon-reload
-sudo systemctl enable life-agent-bot
-sudo systemctl start life-agent-bot
-sudo systemctl status life-agent-bot
+systemctl --user status life-agent-bot --no-pager
+journalctl --user -u life-agent-bot -f
 ```
 
-로그 확인:
+문제가 생겼을 때는 아래 순서로 보면 됩니다.
 
 ```bash
-journalctl -u life-agent-bot -f
+systemctl --user status life-agent-bot --no-pager
+journalctl --user -u life-agent-bot -n 100 --no-pager
+ls -la .update-ready
 ```
+
+`.update-ready`가 남아 있으면 새 프로세스가 준비 완료 알림 단계까지 도달하지 못한 것입니다.
+`.update-ready`가 없어졌는데 Telegram 메시지가 없다면 Telegram API 전송이 실패했을 가능성이 큽니다.
 
 ## 언어별 README에 대해
 

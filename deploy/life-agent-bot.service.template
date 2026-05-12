@@ -1,0 +1,17 @@
+[Unit]
+Description=Life Agent Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+{{USER_LINE}}
+WorkingDirectory={{WORKING_DIRECTORY}}
+ExecStart={{NPM_BIN}} run start
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PATH={{NODE_DIR}}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy={{INSTALL_TARGET}}

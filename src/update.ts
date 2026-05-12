@@ -17,22 +17,27 @@ export async function sendUpdateReadyNoticeIfNeeded(bot: Bot): Promise<void> {
   }
 
   const notice = parseUpdateReadyNotice(text);
-  await unlink(updateReadyPath).catch(() => {});
 
   if (!notice) {
+    await unlink(updateReadyPath).catch(() => {});
     return;
   }
 
-  await bot.api.sendMessage(
-    notice.chatId,
-    [
-      '업데이트 후 재시작 완료.',
-      '사용 준비가 끝났습니다.',
-      '',
-      `Branch: ${notice.branch}`,
-      `Commit: ${notice.commit}`
-    ].join('\n')
-  );
+  try {
+    await bot.api.sendMessage(
+      notice.chatId,
+      [
+        '업데이트 후 재시작 완료.',
+        '사용 준비가 끝났습니다.',
+        '',
+        `Branch: ${notice.branch}`,
+        `Commit: ${notice.commit}`
+      ].join('\n')
+    );
+    await unlink(updateReadyPath).catch(() => {});
+  } catch (error) {
+    console.warn('Failed to send update ready notice:', error);
+  }
 }
 
 export async function runSelfUpdate(chatId: number): Promise<string> {
