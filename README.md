@@ -9,6 +9,8 @@ Telegram에서 쓰는 개인용 로컬 AI 봇입니다. Telegram Bot polling으�
 - `/ask`: 빠른 모델로 질문
 - `/deep`: 큰 모델로 깊은 질문
 - `/code`: 코딩용 시스템 프롬프트로 질문
+- `/memory`: 저장된 대화 맥락 확인
+- `/reset`: 현재 채팅의 대화 맥락 초기화
 - `/status`: Ollama 상태, 모델 목록, git 브랜치/커밋 확인
 - `/update`: 현재 브랜치 업데이트 후 빌드하고 프로세스 재시작
 - `/help`: 사용법 출력
@@ -20,6 +22,7 @@ Telegram에서 쓰는 개인용 로컬 AI 봇입니다. Telegram Bot polling으�
 - 허용된 Telegram user id만 사용 가능
 - 여러 Telegram user id 허용
 - 사진 caption에서 `/deep`, `/code` 모델 선택
+- 파일 기반 대화 메모리: 최근 대화는 원문으로, 오래된 대화는 요약으로 저장
 
 ## 준비물
 
@@ -60,6 +63,9 @@ FAST_MODEL=gemma4:e4b
 DEEP_MODEL=gemma4:26b
 CODE_MODEL=gemma4:26b
 VISION_MODEL=gemma4:e4b
+
+MEMORY_DATA_DIR=.data
+MEMORY_MAX_RECENT_TURNS=16
 ```
 
 값 설명:
@@ -72,6 +78,8 @@ VISION_MODEL=gemma4:e4b
 - `DEEP_MODEL`: `/deep`에 쓸 큰 모델입니다.
 - `CODE_MODEL`: `/code`에 쓸 코딩용 모델입니다.
 - `VISION_MODEL`: 이미지 메시지를 분석할 모델입니다. 값을 비우면 코드 기본값은 `FAST_MODEL`과 같은 모델입니다.
+- `MEMORY_DATA_DIR`: 대화 메모리를 저장할 폴더입니다. 비워두면 대화 메모리는 비활성화됩니다. 설정하면 폴더 안에 `life-agent-memory.json` 파일을 만듭니다.
+- `MEMORY_MAX_RECENT_TURNS`: 최근 대화 원문을 유지할 개수입니다. 이 개수를 넘은 오래된 대화는 요약에 흡수됩니다. 기본값은 `16`입니다.
 
 여러 명이 쓰려면 이렇게 넣습니다.
 
@@ -127,11 +135,15 @@ npm start
 - `/ask 질문`: `FAST_MODEL`로 빠르게 답합니다.
 - `/deep 질문`: `DEEP_MODEL`로 더 깊게 답합니다.
 - `/code 질문`: `CODE_MODEL`과 코딩용 시스템 프롬프트로 답합니다.
+- `/memory`: 현재 채팅에 저장된 대화 요약과 최근 원문 맥락을 보여줍니다.
+- `/reset`: 현재 채팅의 대화 맥락을 지웁니다.
 - `/status`: Ollama 상태, 모델 목록, git 브랜치, git 커밋을 보여줍니다.
 - `/update`: 현재 체크아웃된 브랜치를 `git pull --ff-only`로 업데이트하고, `npm install`, `npm run build` 후 재시작합니다.
 - `/help`: 사용법을 보여줍니다.
 
 일반 텍스트 메시지는 `/ask`처럼 처리됩니다.
+
+`MEMORY_DATA_DIR`를 설정하면 봇은 채팅방별로 대화 맥락을 저장합니다. 답변할 때는 저장된 요약과 최근 원문 대화를 질문 앞에 붙여 모델에 전달합니다. 답변을 Telegram에 보낸 뒤 이번 질문과 답변을 저장하고, 최근 원문 개수가 `MEMORY_MAX_RECENT_TURNS`를 넘으면 오래된 부분을 `FAST_MODEL`로 요약해 압축합니다.
 
 답변에 포함된 Markdown은 Telegram에서 보이는 서식으로 일부 변환됩니다.
 

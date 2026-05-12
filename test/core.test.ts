@@ -1,7 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { buildImageRequest } from '../src/imageRequest.js';
+import {
+  buildPromptWithMemory,
+  createFileMemoryStore,
+  buildMemoryContext,
+  createEmptyConversationMemory,
+  getMemoryFilePath,
+  rememberTurn
+} from '../src/memory.js';
 import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT } from '../src/prompts.js';
 import { markdownToTelegramHtml } from '../src/telegramFormat.js';
 import { buildUpdateReadyNotice, parseUpdateReadyNotice } from '../src/updateNotice.js';
@@ -61,6 +72,165 @@ describe('loadConfig', () => {
     });
 
     assert.equal(config.visionModel, 'gemma4:26b');
+  });
+
+  it('leaves file memory disabled unless a data directory is configured', () => {
+    const config = loadConfig({
+      TELEGRAM_BOT_TOKEN: 'token',
+      ALLOWED_TELEGRAM_USER_ID: '123'
+    });
+
+    assert.equal(config.memoryDataDir, undefined);
+  });
+
+  it('reads the memory data directory from env', () => {
+    const config = loadConfig({
+      TELEGRAM_BOT_TOKEN: 'token',
+      ALLOWED_TELEGRAM_USER_ID: '123',
+      MEMORY_DATA_DIR: '/tmp/life-agent-data'
+    });
+
+    assert.equal(config.memoryDataDir, '/tmp/life-agent-data');
+  });
+
+  it('reads the recent memory turn limit from env', () => {
+    const config = loadConfig({
+      TELEGRAM_BOT_TOKEN: 'token',
+      ALLOWED_TELEGRAM_USER_ID: '123',
+      MEMORY_MAX_RECENT_TURNS: '24'
+    });
+
+    assert.equal(config.memoryMaxRecentTurns, 24);
+  });
+});
+
+describe('conversation memory', () => {
+  it('uses a stable app-specific file name inside the configured data directory', () => {
+    assert.equal(getMemoryFilePath('/tmp/life-agent-data'), '/tmp/life-agent-data/life-agent-memory.json');
+  });
+
+  it('keeps recent turns as full text when under the limit', async () => {
+    const memory = createEmptyConversationMemory();
+
+    await rememberTurn(memory, {
+      user: '오늘 운동 계획 짜줘',
+      assistant: '가볍게 30분 걷기부터 시작하세요.',
+      maxRecentTurns: 3,
+      summarize: async () => {
+        throw new Error('summary should not run');
+      }
+    });
+
+    assert.equal(memory.summary, '');
+    assert.deepEqual(memory.recentTurns.map((turn) => turn.user), ['오늘 운동 계획 짜줘']);
+    assert.equal(memory.recentTurns[0]?.assistant, '가볍게 30분 걷기부터 시작하세요.');
+  });
+
+  it('summarizes older full turns after the recent turn limit is exceeded', async () => {
+    const memory = createEmptyConversationMemory();
+
+    await rememberTurn(memory, {
+      user: '첫 질문',
+      assistant: '첫 답변',
+      maxRecentTurns: 2,
+      summarize: async () => '요약: 첫 질문과 첫 답변'
+    });
+    await rememberTurn(memory, {
+      user: '둘째 질문',
+      assistant: '둘째 답변',
+      maxRecentTurns: 2,
+      summarize: async () => '요약이 호출되면 안 됨'
+    });
+    await rememberTurn(memory, {
+      user: '셋째 질문',
+      assistant: '셋째 답변',
+      maxRecentTurns: 2,
+      summarize: async (input) => {
+        assert.equal(input.previousSummary, '');
+        assert.deepEqual(input.olderTurns.map((turn) => turn.user), ['첫 질문']);
+        return '요약: 첫 질문과 첫 답변';
+      }
+    });
+
+    assert.equal(memory.summary, '요약: 첫 질문과 첫 답변');
+    assert.deepEqual(memory.recentTurns.map((turn) => turn.user), ['둘째 질문', '셋째 질문']);
+  });
+
+  it('builds context with compressed summary first and recent full turns after it', () => {
+    const memory = createEmptyConversationMemory();
+    memory.summary = '사용자는 TypeScript 봇을 만들고 있다.';
+    memory.recentTurns = [
+      {
+        user: '최근 질문',
+        assistant: '최근 답변',
+        createdAt: '2026-05-12T00:00:00.000Z'
+      }
+    ];
+
+    assert.equal(
+      buildMemoryContext(memory),
+      [
+        '이전 대화 요약:',
+        '사용자는 TypeScript 봇을 만들고 있다.',
+        '',
+        '최근 대화 원문:',
+        '사용자: 최근 질문',
+        '비서: 최근 답변'
+      ].join('\n')
+    );
+  });
+
+  it('adds memory context before the current user prompt', () => {
+    assert.equal(
+      buildPromptWithMemory('오늘은 뭐 하지?', '최근 대화 원문:\n사용자: 운동 계획'),
+      [
+        '아래는 이전 대화 맥락이다. 현재 질문에 필요한 경우에만 참고하고, 맥락과 충돌하면 현재 질문을 우선한다.',
+        '',
+        '최근 대화 원문:',
+        '사용자: 운동 계획',
+        '',
+        '현재 질문:',
+        '오늘은 뭐 하지?'
+      ].join('\n')
+    );
+  });
+
+  it('leaves prompts unchanged when there is no memory context', () => {
+    assert.equal(buildPromptWithMemory('오늘은 뭐 하지?', ''), '오늘은 뭐 하지?');
+  });
+
+  it('persists chat memory to the configured data directory', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'life-agent-memory-test-'));
+
+    try {
+      const store = createFileMemoryStore(tempDir);
+      const memory = createEmptyConversationMemory();
+      memory.summary = '오래된 대화 요약';
+
+      await store.set('123', memory);
+
+      const reloadedStore = createFileMemoryStore(tempDir);
+      assert.deepEqual(await reloadedStore.get('123'), memory);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('clears a single chat memory from the file store', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'life-agent-memory-test-'));
+
+    try {
+      const store = createFileMemoryStore(tempDir);
+      const memory = createEmptyConversationMemory();
+      memory.summary = '지워질 요약';
+
+      await store.set('123', memory);
+      await store.clear('123');
+
+      assert.deepEqual(await store.get('123'), createEmptyConversationMemory());
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

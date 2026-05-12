@@ -3,6 +3,7 @@
 !.env.example
 .update-ready
 .update-ready.*
+.data/
 node_modules/
 dist/
 coverage/

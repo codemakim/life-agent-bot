@@ -110,6 +110,8 @@ export async function registerCommands(bot: Bot): Promise<void> {
     { command: 'ask', description: '빠른 질문' },
     { command: 'deep', description: '26B 모델로 깊은 질문' },
     { command: 'code', description: '코딩 질문' },
+    { command: 'memory', description: '저장된 대화 맥락 확인' },
+    { command: 'reset', description: '대화 맥락 초기화' },
     { command: 'status', description: '서버 상태 확인' },
     { command: 'update', description: '봇 업데이트' },
     { command: 'help', description: '사용법' }

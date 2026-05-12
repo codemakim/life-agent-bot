@@ -7,6 +7,8 @@ export type AppConfig = {
   deepModel: string;
   codeModel: string;
   visionModel: string;
+  memoryDataDir?: string;
+  memoryMaxRecentTurns: number;
 };
 
 function readBoolean(value: string | undefined): boolean {
@@ -18,6 +20,11 @@ function readUserIds(value: string | undefined): string[] {
     .split(',')
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 // 환경변수 검증은 시작 시점에 한 번만 한다.
@@ -46,6 +53,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     fastModel: env.FAST_MODEL?.trim() || 'gemma4:e4b',
     deepModel: env.DEEP_MODEL?.trim() || 'gemma4:26b',
     codeModel: env.CODE_MODEL?.trim() || 'gemma4:26b',
-    visionModel: env.VISION_MODEL?.trim() || env.FAST_MODEL?.trim() || 'gemma4:e4b'
+    visionModel: env.VISION_MODEL?.trim() || env.FAST_MODEL?.trim() || 'gemma4:e4b',
+    memoryDataDir: env.MEMORY_DATA_DIR?.trim() || undefined,
+    memoryMaxRecentTurns: readPositiveInteger(env.MEMORY_MAX_RECENT_TURNS, 16)
   };
 }

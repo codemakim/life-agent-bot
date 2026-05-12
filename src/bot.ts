@@ -2,12 +2,21 @@ import { Bot, Context } from 'grammy';
 import { rejectIfNotAllowed, setupModeNotice } from './auth.js';
 import { AppConfig } from './config.js';
 import { buildImageRequest } from './imageRequest.js';
+import {
+  ConversationMemoryStore,
+  buildMemoryContext,
+  buildMemorySummaryPrompt,
+  buildPromptWithMemory,
+  createFileMemoryStore,
+  rememberTurn
+} from './memory.js';
 import { AskOllamaInput, OllamaClient, createOllamaClient } from './ollama.js';
-import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT } from './prompts.js';
+import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, MEMORY_SUMMARY_SYSTEM_PROMPT } from './prompts.js';
 import { getGitValue } from './shell.js';
 import {
   getCommandText,
   registerCommands,
+  replyLong,
   replaceStatusWithLongText,
   withTyping
 } from './telegram.js';
@@ -22,10 +31,11 @@ export type LifeAgentBot = {
 export function createLifeAgentBot(config: AppConfig): LifeAgentBot {
   const bot = new Bot(config.telegramBotToken);
   const ollama = createOllamaClient(config);
+  const memoryStore = config.memoryDataDir ? createFileMemoryStore(config.memoryDataDir) : undefined;
 
   // 핸들러 등록과 실제 polling 시작을 분리한다.
   // 그래야 나중에 테스트나 초기화 로직을 붙일 때 봇이 바로 실행되지 않는다.
-  registerHandlers(bot, config, ollama);
+  registerHandlers(bot, config, ollama, memoryStore);
 
   return {
     bot,
@@ -43,7 +53,12 @@ export function createLifeAgentBot(config: AppConfig): LifeAgentBot {
   };
 }
 
-function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): void {
+function registerHandlers(
+  bot: Bot,
+  config: AppConfig,
+  ollama: OllamaClient,
+  memoryStore?: ConversationMemoryStore
+): void {
   // 모든 명령어는 가장 먼저 허용 사용자 검사를 한다.
   // 나중에 명령어를 추가해도 이 순서를 유지해야 한다.
   bot.command('start', async (ctx) => {
@@ -58,6 +73,8 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
         '/ask 질문 - 빠른 모델',
         '/deep 질문 - 26B 모델',
         '/code 질문 - 코딩용',
+        '/memory - 저장된 대화 맥락 확인',
+        '/reset - 이 채팅의 대화 맥락 초기화',
         '/status - 상태 확인',
         '/update - git pull 후 재시작',
         '/help - 사용법',
@@ -78,6 +95,8 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
         `/ask 오늘 할 일 정리 좀 도와줘`,
         `/deep 이 설계 방향이 맞는지 깊게 봐줘`,
         `/code TypeScript에서 이 함수 설계 어떻게 할까?`,
+        `/memory`,
+        `/reset`,
         `/status`,
         `/update`,
         '',
@@ -98,7 +117,7 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
       return;
     }
 
-    await sendPromptToOllama(ctx, ollama, `${config.fastModel}로 답변 중...`, {
+    await sendPromptToOllama(ctx, config, ollama, memoryStore, `${config.fastModel}로 답변 중...`, {
       model: config.fastModel,
       prompt,
       // 빠른 질문용: 일상적인 질문을 짧은 context와 응답 길이로 처리한다.
@@ -118,7 +137,7 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
       return;
     }
 
-    await sendPromptToOllama(ctx, ollama, `${config.deepModel}로 깊게 보는 중...`, {
+    await sendPromptToOllama(ctx, config, ollama, memoryStore, `${config.deepModel}로 깊게 보는 중...`, {
       model: config.deepModel,
       prompt,
       system: DEEP_SYSTEM_PROMPT,
@@ -139,7 +158,7 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
       return;
     }
 
-    await sendPromptToOllama(ctx, ollama, `${config.codeModel} 코딩 모드로 답변 중...`, {
+    await sendPromptToOllama(ctx, config, ollama, memoryStore, `${config.codeModel} 코딩 모드로 답변 중...`, {
       model: config.codeModel,
       prompt,
       system: CODE_SYSTEM_PROMPT,
@@ -148,6 +167,45 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
       numCtx: 8192,
       numPredict: 2200
     });
+  });
+
+  bot.command('memory', async (ctx) => {
+    if (await rejectIfNotAllowed(ctx, config)) return;
+
+    if (!memoryStore) {
+      await ctx.reply('대화 메모리가 비활성화되어 있습니다. MEMORY_DATA_DIR를 설정하면 켜집니다.');
+      return;
+    }
+
+    const chatId = getMemoryChatId(ctx);
+
+    if (!chatId) {
+      await ctx.reply('이 채팅의 id를 확인하지 못했습니다.');
+      return;
+    }
+
+    const memory = await memoryStore.get(chatId);
+    const context = buildMemoryContext(memory);
+    await replyLong(ctx, context || '저장된 대화 맥락이 없습니다.');
+  });
+
+  bot.command('reset', async (ctx) => {
+    if (await rejectIfNotAllowed(ctx, config)) return;
+
+    if (!memoryStore) {
+      await ctx.reply('대화 메모리가 비활성화되어 있습니다. MEMORY_DATA_DIR를 설정하면 켜집니다.');
+      return;
+    }
+
+    const chatId = getMemoryChatId(ctx);
+
+    if (!chatId) {
+      await ctx.reply('이 채팅의 id를 확인하지 못했습니다.');
+      return;
+    }
+
+    await memoryStore.clear(chatId);
+    await ctx.reply('이 채팅의 대화 맥락을 초기화했습니다.');
   });
 
   bot.command('status', async (ctx) => {
@@ -177,7 +235,9 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
         `FAST_MODEL: ${config.fastModel}`,
         `DEEP_MODEL: ${config.deepModel}`,
         `CODE_MODEL: ${config.codeModel}`,
-        `VISION_MODEL: ${config.visionModel}`
+        `VISION_MODEL: ${config.visionModel}`,
+        `MEMORY_DATA_DIR: ${config.memoryDataDir ?? 'disabled'}`,
+        `MEMORY_MAX_RECENT_TURNS: ${config.memoryMaxRecentTurns}`
       ].join('\n');
 
       await replaceStatusWithLongText(ctx, status.message_id, text);
@@ -227,7 +287,7 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
     }
 
     // 일반 텍스트는 /ask처럼 처리한다. 개인 채팅에서 매번 명령어를 치지 않아도 된다.
-    await sendPromptToOllama(ctx, ollama, `${config.fastModel}로 답변 중...`, {
+    await sendPromptToOllama(ctx, config, ollama, memoryStore, `${config.fastModel}로 답변 중...`, {
       model: config.fastModel,
       prompt: text,
       temperature: 0.3,
@@ -253,14 +313,17 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
       const image = await withTyping(ctx, () =>
         downloadPhotoAsBase64(bot, config.telegramBotToken, photo)
       );
+      const inputPrompt = await addMemoryToPrompt(ctx, memoryStore, imageRequest.prompt);
       const answer = await withTyping(ctx, () =>
         ollama.ask({
           ...imageRequest,
+          prompt: inputPrompt,
           images: [image]
         })
       );
 
       await replaceStatusWithLongText(ctx, status.message_id, answer || '응답이 비어 있습니다.');
+      await rememberConversation(ctx, config, ollama, memoryStore, imageRequest.prompt, answer);
     } catch (error) {
       await replaceStatusWithLongText(
         ctx,
@@ -273,7 +336,9 @@ function registerHandlers(bot: Bot, config: AppConfig, ollama: OllamaClient): vo
 
 async function sendPromptToOllama(
   ctx: Context,
+  config: AppConfig,
   ollama: OllamaClient,
+  memoryStore: ConversationMemoryStore | undefined,
   statusText: string,
   input: AskOllamaInput
 ): Promise<void> {
@@ -282,13 +347,82 @@ async function sendPromptToOllama(
   const status = await ctx.reply(statusText);
 
   try {
-    const answer = await withTyping(ctx, () => ollama.ask(input));
+    const inputPrompt = await addMemoryToPrompt(ctx, memoryStore, input.prompt);
+    const answer = await withTyping(ctx, () =>
+      ollama.ask({
+        ...input,
+        prompt: inputPrompt
+      })
+    );
     await replaceStatusWithLongText(ctx, status.message_id, answer || '응답이 비어 있습니다.');
+    await rememberConversation(ctx, config, ollama, memoryStore, input.prompt, answer);
   } catch (error) {
     await replaceStatusWithLongText(
       ctx,
       status.message_id,
       `오류: ${error instanceof Error ? error.message : String(error)}`
     );
+  }
+}
+
+function getMemoryChatId(ctx: Context): string | undefined {
+  return ctx.chat?.id ? String(ctx.chat.id) : undefined;
+}
+
+async function addMemoryToPrompt(
+  ctx: Context,
+  memoryStore: ConversationMemoryStore | undefined,
+  prompt: string
+): Promise<string> {
+  const chatId = getMemoryChatId(ctx);
+
+  if (!memoryStore || !chatId) {
+    return prompt;
+  }
+
+  try {
+    const memory = await memoryStore.get(chatId);
+    return buildPromptWithMemory(prompt, buildMemoryContext(memory));
+  } catch (error) {
+    console.error('Failed to read conversation memory:', error);
+    return prompt;
+  }
+}
+
+async function rememberConversation(
+  ctx: Context,
+  config: AppConfig,
+  ollama: OllamaClient,
+  memoryStore: ConversationMemoryStore | undefined,
+  userPrompt: string,
+  assistantAnswer: string
+): Promise<void> {
+  const chatId = getMemoryChatId(ctx);
+
+  if (!memoryStore || !chatId || !assistantAnswer.trim()) {
+    return;
+  }
+
+  try {
+    const memory = await memoryStore.get(chatId);
+
+    await rememberTurn(memory, {
+      user: userPrompt,
+      assistant: assistantAnswer,
+      maxRecentTurns: config.memoryMaxRecentTurns,
+      summarize: async (input) =>
+        ollama.ask({
+          model: config.fastModel,
+          prompt: buildMemorySummaryPrompt(input),
+          system: MEMORY_SUMMARY_SYSTEM_PROMPT,
+          temperature: 0.1,
+          numCtx: 4096,
+          numPredict: 900
+        })
+    });
+
+    await memoryStore.set(chatId, memory);
+  } catch (error) {
+    console.error('Failed to update conversation memory:', error);
   }
 }

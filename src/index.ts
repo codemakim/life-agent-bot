@@ -15,6 +15,8 @@ lifeAgent
     console.log(`DEEP_MODEL=${config.deepModel}`);
     console.log(`CODE_MODEL=${config.codeModel}`);
     console.log(`VISION_MODEL=${config.visionModel}`);
+    console.log(`MEMORY_DATA_DIR=${config.memoryDataDir ?? 'disabled'}`);
+    console.log(`MEMORY_MAX_RECENT_TURNS=${config.memoryMaxRecentTurns}`);
   })
   .catch((error) => {
     console.error(error);
