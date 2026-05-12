@@ -5,6 +5,10 @@ import { getGitValue, runCommand } from './shell.js';
 
 const updateReadyPath = '.update-ready';
 
+export function getSelfUpdateInstallArgs(): string[] {
+  return ['install', '--include=dev'];
+}
+
 // /update는 빌드 성공 후 현재 프로세스를 종료한다.
 // 이 함수는 다음 부팅 때 임시 파일을 읽고 Telegram 준비 완료 메시지를 보낸다.
 export async function sendUpdateReadyNoticeIfNeeded(bot: Bot): Promise<void> {
@@ -45,7 +49,7 @@ export async function runSelfUpdate(chatId: number): Promise<string> {
   // 배포 브랜치를 바꿔도 코드 수정이 필요 없게 하기 위해서다.
   const beforeBranch = await getGitValue(['branch', '--show-current']);
   await runCommand('git', ['pull', '--ff-only']);
-  const install = await runCommand('npm', ['install']);
+  const install = await runCommand('npm', getSelfUpdateInstallArgs());
   const build = await runCommand('npm', ['run', 'build']);
   const afterBranch = await getGitValue(['branch', '--show-current']);
   const afterCommit = await getGitValue(['rev-parse', '--short', 'HEAD']);

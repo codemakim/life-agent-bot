@@ -16,7 +16,7 @@ import {
 import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT } from '../src/prompts.js';
 import { markdownToTelegramHtml } from '../src/telegramFormat.js';
 import { registerCommands } from '../src/telegram.js';
-import { sendUpdateReadyNoticeIfNeeded } from '../src/update.js';
+import { getSelfUpdateInstallArgs, sendUpdateReadyNoticeIfNeeded } from '../src/update.js';
 import { buildUpdateReadyNotice, parseUpdateReadyNotice } from '../src/updateNotice.js';
 import { splitTelegramMessage } from '../src/telegramText.js';
 
@@ -374,5 +374,11 @@ describe('update ready notice', () => {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('self update', () => {
+  it('installs dev dependencies before building under production services', () => {
+    assert.deepEqual(getSelfUpdateInstallArgs(), ['install', '--include=dev']);
   });
 });
