@@ -21,7 +21,7 @@ import {
   withTyping
 } from './telegram.js';
 import { downloadPhotoAsBase64, getLargestPhoto } from './telegramPhoto.js';
-import { runSelfUpdate, sendUpdateReadyNoticeIfNeeded } from './update.js';
+import { retryUpdateReadyNoticeUntilSent, runSelfUpdate } from './update.js';
 
 export type LifeAgentBot = {
   bot: Bot;
@@ -47,8 +47,10 @@ export function createLifeAgentBot(config: AppConfig): LifeAgentBot {
       // slash command는 시작할 때마다 등록한다.
       // Telegram에서는 덮어쓰기처럼 동작하므로 별도 배포 단계가 필요 없다.
       await registerCommands(bot);
-      await sendUpdateReadyNoticeIfNeeded(bot);
       bot.start();
+      void retryUpdateReadyNoticeUntilSent(bot).catch((error) => {
+        console.error('Update ready notice retry failed:', error);
+      });
     }
   };
 }

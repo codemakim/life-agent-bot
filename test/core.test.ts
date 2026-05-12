@@ -16,7 +16,11 @@ import {
 import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT } from '../src/prompts.js';
 import { markdownToTelegramHtml } from '../src/telegramFormat.js';
 import { registerCommands } from '../src/telegram.js';
-import { getSelfUpdateInstallArgs, sendUpdateReadyNoticeIfNeeded } from '../src/update.js';
+import {
+  getSelfUpdateScriptArgs,
+  retryUpdateReadyNoticeUntilSent,
+  sendUpdateReadyNoticeIfNeeded
+} from '../src/update.js';
 import { buildUpdateReadyNotice, parseUpdateReadyNotice } from '../src/updateNotice.js';
 import { splitTelegramMessage } from '../src/telegramText.js';
 
@@ -375,10 +379,59 @@ describe('update ready notice', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('retries the ready notice until Telegram accepts it', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'life-agent-update-test-'));
+    const previousCwd = process.cwd();
+    let attempts = 0;
+    const waits: number[] = [];
+
+    try {
+      process.chdir(tempDir);
+      await writeFile(
+        '.update-ready',
+        buildUpdateReadyNotice({
+          chatId: 123456789,
+          branch: 'master',
+          commit: 'abc1234'
+        }),
+        'utf8'
+      );
+
+      const bot = {
+        api: {
+          sendMessage: async () => {
+            attempts += 1;
+            if (attempts < 3) {
+              throw new Error('telegram timeout');
+            }
+          }
+        }
+      };
+
+      await retryUpdateReadyNoticeUntilSent(bot as never, {
+        maxAttempts: 3,
+        intervalMs: 25,
+        wait: async (ms) => {
+          waits.push(ms);
+        }
+      });
+
+      assert.equal(attempts, 3);
+      assert.deepEqual(waits, [25, 25]);
+      await assert.rejects(() => readFile('.update-ready', 'utf8'));
+    } finally {
+      process.chdir(previousCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('self update', () => {
-  it('installs dev dependencies before building under production services', () => {
-    assert.deepEqual(getSelfUpdateInstallArgs(), ['install', '--include=dev']);
+  it('delegates the update procedure to the shell script', () => {
+    assert.deepEqual(getSelfUpdateScriptArgs(123456789), [
+      'scripts/self-update.sh',
+      '123456789'
+    ]);
   });
 });

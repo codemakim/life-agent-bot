@@ -236,11 +236,17 @@ caption 없이 이미지만 보내면 기본 이미지 설명 프롬프트로 �
 
 `/update`는 현재 브랜치가 `main`이든 `master`든 하드코딩하지 않고 현재 체크아웃된 브랜치를 업데이트합니다.
 
-실행 순서:
+내부적으로는 아래 스크립트를 실행합니다.
+
+```bash
+scripts/self-update.sh <telegram-chat-id>
+```
+
+스크립트 실행 순서:
 
 ```bash
 git pull --ff-only
-npm install
+npm install --include=dev
 npm run build
 ```
 
