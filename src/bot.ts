@@ -14,6 +14,7 @@ import { AskOllamaInput, OllamaClient, createOllamaClient } from './ollama.js';
 import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, MEMORY_SUMMARY_SYSTEM_PROMPT } from './prompts.js';
 import { getGitValue } from './shell.js';
 import {
+  createStreamStatusUpdater,
   getCommandText,
   registerCommands,
   replyLong,
@@ -316,14 +317,20 @@ function registerHandlers(
         downloadPhotoAsBase64(bot, config.telegramBotToken, photo)
       );
       const inputPrompt = await addMemoryToPrompt(ctx, memoryStore, imageRequest.prompt);
+      const streamStatus = createStreamStatusUpdater(ctx, status.message_id);
       const answer = await withTyping(ctx, () =>
-        ollama.ask({
-          ...imageRequest,
-          prompt: inputPrompt,
-          images: [image]
-        })
+        streamPromptToOllama(
+          ollama,
+          {
+            ...imageRequest,
+            prompt: inputPrompt,
+            images: [image]
+          },
+          streamStatus.update
+        )
       );
 
+      await streamStatus.wait();
       await replaceStatusWithLongText(ctx, status.message_id, answer || '응답이 비어 있습니다.');
       await rememberConversation(ctx, config, ollama, memoryStore, imageRequest.prompt, answer);
     } catch (error) {
@@ -350,12 +357,18 @@ async function sendPromptToOllama(
 
   try {
     const inputPrompt = await addMemoryToPrompt(ctx, memoryStore, input.prompt);
+    const streamStatus = createStreamStatusUpdater(ctx, status.message_id);
     const answer = await withTyping(ctx, () =>
-      ollama.ask({
-        ...input,
-        prompt: inputPrompt
-      })
+      streamPromptToOllama(
+        ollama,
+        {
+          ...input,
+          prompt: inputPrompt
+        },
+        streamStatus.update
+      )
     );
+    await streamStatus.wait();
     await replaceStatusWithLongText(ctx, status.message_id, answer || '응답이 비어 있습니다.');
     await rememberConversation(ctx, config, ollama, memoryStore, input.prompt, answer);
   } catch (error) {
@@ -365,6 +378,19 @@ async function sendPromptToOllama(
       `오류: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+async function streamPromptToOllama(
+  ollama: OllamaClient,
+  input: AskOllamaInput,
+  updateStatus: (text: string) => Promise<void>
+): Promise<string> {
+  let partialAnswer = '';
+
+  return ollama.streamAsk(input, async (chunk) => {
+    partialAnswer += chunk;
+    await updateStatus(partialAnswer);
+  });
 }
 
 function getMemoryChatId(ctx: Context): string | undefined {

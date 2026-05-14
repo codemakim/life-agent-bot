@@ -17,6 +17,7 @@ Telegram에서 쓰는 개인용 로컬 AI 봇입니다. Telegram Bot polling으�
 - 이미지 메시지 분석
 - Telegram slash command 등록
 - typing 표시 유지
+- 답변 생성 중 2초 간격 스트리밍형 상태 업데이트
 - 긴 메시지 분할 전송
 - 답변 Markdown 일부를 Telegram 서식으로 표시
 - 허용된 Telegram user id만 사용 가능
@@ -191,6 +192,8 @@ loginctl enable-linger "$USER"
 `MEMORY_DATA_DIR`를 설정하면 봇은 채팅방별로 대화 맥락을 저장합니다. 답변할 때는 저장된 요약과 최근 원문 대화를 질문 앞에 붙여 모델에 전달합니다. 답변을 Telegram에 보낸 뒤 이번 질문과 답변을 저장하고, 최근 원문 개수가 `MEMORY_MAX_RECENT_TURNS`를 넘으면 오래된 부분을 `FAST_MODEL`로 요약해 압축합니다.
 
 답변에 포함된 Markdown은 Telegram에서 보이는 서식으로 일부 변환됩니다.
+긴 답변은 생성 중에도 같은 메시지를 2초 간격으로 갱신해서 진행 상황을 보여주고,
+완료 후에는 최종 답변을 다시 정리해 표시합니다.
 
 지원하는 대표 서식:
 

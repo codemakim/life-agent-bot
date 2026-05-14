@@ -9,6 +9,11 @@ type OllamaChatResponse = {
   done?: boolean;
 };
 
+export type OllamaStreamChunk = {
+  content: string;
+  done: boolean;
+};
+
 export type AskOllamaInput = {
   model: string;
   prompt: string;
@@ -21,8 +26,27 @@ export type AskOllamaInput = {
 
 export type OllamaClient = {
   ask(input: AskOllamaInput): Promise<string>;
+  streamAsk(
+    input: AskOllamaInput,
+    onChunk: (chunk: string) => Promise<void> | void
+  ): Promise<string>;
   getTags(): Promise<string>;
 };
+
+export function parseOllamaStreamLine(line: string): OllamaStreamChunk | undefined {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const json = JSON.parse(trimmed) as OllamaChatResponse;
+
+  return {
+    content: json.message?.content ?? '',
+    done: json.done === true
+  };
+}
 
 // Ollama HTTP API 호출은 이 파일에 모아둔다.
 // Telegram 핸들러가 API payload 구조를 몰라도 되게 하기 위해서다.
@@ -36,8 +60,7 @@ export function createOllamaClient(config: AppConfig): OllamaClient {
         },
         body: JSON.stringify({
           model: input.model,
-          // MVP에서는 non-streaming으로 받는다.
-          // 그래야 "답변 중..." 메시지를 최종 답변으로 한 번에 수정하기 쉽다.
+          // 메모리 요약처럼 중간 표시가 필요 없는 내부 호출은 한 번에 받는다.
           stream: false,
           think: false,
           messages: [
@@ -68,6 +91,88 @@ export function createOllamaClient(config: AppConfig): OllamaClient {
       const json = (await response.json()) as OllamaChatResponse;
 
       return json.message?.content?.trim() ?? '';
+    },
+
+    async streamAsk(input, onChunk) {
+      const response = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: input.model,
+          stream: true,
+          think: false,
+          messages: [
+            {
+              role: 'system',
+              content: input.system ?? DEFAULT_SYSTEM_PROMPT
+            },
+            {
+              role: 'user',
+              content: input.prompt,
+              ...(input.images && input.images.length > 0 ? { images: input.images } : {})
+            }
+          ],
+          options: {
+            temperature: input.temperature ?? 0.3,
+            num_ctx: input.numCtx ?? 4096,
+            num_predict: input.numPredict ?? 1200
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama error: ${response.status} ${await response.text()}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Ollama stream response body is empty');
+      }
+
+      const decoder = new TextDecoder();
+      const reader = response.body.getReader();
+      let buffer = '';
+      let answer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const chunk = parseOllamaStreamLine(line);
+
+          if (!chunk) {
+            continue;
+          }
+
+          if (chunk.content) {
+            answer += chunk.content;
+            await onChunk(chunk.content);
+          }
+
+          if (chunk.done) {
+            return answer.trim();
+          }
+        }
+      }
+
+      buffer += decoder.decode();
+      const finalChunk = parseOllamaStreamLine(buffer);
+
+      if (finalChunk?.content) {
+        answer += finalChunk.content;
+        await onChunk(finalChunk.content);
+      }
+
+      return answer.trim();
     },
 
     async getTags() {

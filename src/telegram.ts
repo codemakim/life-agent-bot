@@ -2,6 +2,9 @@ import { Bot, Context } from 'grammy';
 import { markdownToTelegramHtml } from './telegramFormat.js';
 import { splitTelegramMessage } from './telegramText.js';
 
+const STREAM_EDIT_INTERVAL_MS = 2000;
+const STREAM_EDIT_LIMIT = 3900;
+
 // Telegram의 typing 표시는 금방 사라진다.
 // Ollama 응답이 길어질 수 있으니 작업이 끝날 때까지 주기적으로 갱신한다.
 export async function withTyping<T>(ctx: Context, task: () => Promise<T>): Promise<T> {
@@ -60,6 +63,66 @@ export async function replaceStatusWithLongText(
   for (const chunk of chunks.slice(1)) {
     await replyFormatted(ctx, chunk);
   }
+}
+
+type StreamEditDecision = {
+  text: string;
+  lastSentText: string;
+  lastEditAt: number;
+  now: number;
+  intervalMs: number;
+};
+
+export function shouldSendStreamEdit({
+  text,
+  lastSentText,
+  lastEditAt,
+  now,
+  intervalMs
+}: StreamEditDecision): boolean {
+  return text.trim().length > 0 && text !== lastSentText && now - lastEditAt >= intervalMs;
+}
+
+export function createStreamStatusUpdater(ctx: Context, messageId: number) {
+  let lastEditAt = Date.now();
+  let lastSentText = '';
+  let pending: Promise<void> = Promise.resolve();
+
+  async function edit(text: string): Promise<void> {
+    if (!ctx.chat?.id) {
+      return;
+    }
+
+    const visibleText = text.length > STREAM_EDIT_LIMIT ? text.slice(0, STREAM_EDIT_LIMIT) : text;
+    const now = Date.now();
+
+    if (
+      !shouldSendStreamEdit({
+        text: visibleText,
+        lastSentText,
+        lastEditAt,
+        now,
+        intervalMs: STREAM_EDIT_INTERVAL_MS
+      })
+    ) {
+      return;
+    }
+
+    lastEditAt = now;
+    lastSentText = visibleText;
+    pending = pending.then(() => editFormatted(ctx, messageId, visibleText)).catch(() => {});
+    await pending;
+  }
+
+  return {
+    update(text: string): Promise<void> {
+      return edit(text);
+    },
+
+    async wait(): Promise<void> {
+      await pending;
+    }
+  };
 }
 
 async function replyFormatted(ctx: Context, text: string): Promise<void> {

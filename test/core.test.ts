@@ -15,12 +15,13 @@ import {
 } from '../src/memory.js';
 import { CODE_SYSTEM_PROMPT, DEEP_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT } from '../src/prompts.js';
 import { markdownToTelegramHtml } from '../src/telegramFormat.js';
-import { registerCommands } from '../src/telegram.js';
+import { registerCommands, shouldSendStreamEdit } from '../src/telegram.js';
 import {
   getSelfUpdateScriptArgs,
   retryUpdateReadyNoticeUntilSent,
   sendUpdateReadyNoticeIfNeeded
 } from '../src/update.js';
+import { parseOllamaStreamLine } from '../src/ollama.js';
 import { buildUpdateReadyNotice, parseUpdateReadyNotice } from '../src/updateNotice.js';
 import { splitTelegramMessage } from '../src/telegramText.js';
 
@@ -289,6 +290,23 @@ describe('buildImageRequest', () => {
   });
 });
 
+describe('parseOllamaStreamLine', () => {
+  it('extracts streamed assistant content from an Ollama chat chunk', () => {
+    assert.deepEqual(
+      parseOllamaStreamLine('{"message":{"role":"assistant","content":"안녕"},"done":false}'),
+      { content: '안녕', done: false }
+    );
+  });
+
+  it('recognizes the final done chunk even when it has no content', () => {
+    assert.deepEqual(parseOllamaStreamLine('{"done":true}'), { content: '', done: true });
+  });
+
+  it('ignores blank stream lines', () => {
+    assert.equal(parseOllamaStreamLine('   '), undefined);
+  });
+});
+
 describe('splitTelegramMessage', () => {
   it('splits long text below the Telegram edit-safe limit', () => {
     const chunks = splitTelegramMessage('a '.repeat(5000), 3900);
@@ -299,6 +317,47 @@ describe('splitTelegramMessage', () => {
 
   it('returns an empty list for blank text', () => {
     assert.deepEqual(splitTelegramMessage('   '), []);
+  });
+});
+
+describe('shouldSendStreamEdit', () => {
+  it('waits until the configured edit interval has elapsed', () => {
+    assert.equal(
+      shouldSendStreamEdit({
+        text: 'partial answer',
+        lastSentText: '',
+        lastEditAt: 1000,
+        now: 2500,
+        intervalMs: 2000
+      }),
+      false
+    );
+  });
+
+  it('allows an edit after two seconds when text changed', () => {
+    assert.equal(
+      shouldSendStreamEdit({
+        text: 'partial answer',
+        lastSentText: '',
+        lastEditAt: 1000,
+        now: 3000,
+        intervalMs: 2000
+      }),
+      true
+    );
+  });
+
+  it('skips edits when the visible text did not change', () => {
+    assert.equal(
+      shouldSendStreamEdit({
+        text: 'same answer',
+        lastSentText: 'same answer',
+        lastEditAt: 1000,
+        now: 5000,
+        intervalMs: 2000
+      }),
+      false
+    );
   });
 });
 
